@@ -34,7 +34,7 @@ services:
       SYNTHEA_SEED: "20250718"
     command:
       - |
-        java -jar /workspace/bin/synthea-with-dependencies.jar -s $$SYNTHEA_SEED -cs $$SYNTHEA_SEED -r $$SYNTHEA_SEED -p 500 -c config/synthea.properties
+        java -jar /workspace/bin/synthea-with-dependencies.jar -s $$SYNTHEA_SEED -cs $$SYNTHEA_SEED -r $$SYNTHEA_SEED -p 250 -c config/synthea.properties
     volumes:
       - $PWD/bin:/workspace/bin/:ro
       - $PWD/synthea:/workspace/synthea/:rw

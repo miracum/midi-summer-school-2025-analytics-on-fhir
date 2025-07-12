@@ -4,6 +4,5 @@
         "ms-python.black-formatter",
         "ms-toolsai.jupyter",
         "ms-toolsai.datawrangler",
-        "ms-python.vscode-pylance"
     ]
 }
