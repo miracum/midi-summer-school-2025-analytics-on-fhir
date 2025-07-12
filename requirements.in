@@ -1,0 +1,7 @@
+trino==0.335.0
+pathling==7.2.0
+loguru==0.7.2
+seaborn==0.13.2
+python-dotenv==1.1.1
+pandas==2.3.1
+deltalake[pyarrow]==1.0.2
