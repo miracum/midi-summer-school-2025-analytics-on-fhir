@@ -1,0 +1,272 @@
+services:
+  minio:
+    image: docker.io/bitnami/minio:2025.6.13@sha256:628d6a09902e59001eadc82590735eda210bf5d5a68cd72dfbb6894b3c1f97eb
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    environment:
+      MINIO_UPDATE: "off"
+      MINIO_CALLHOME_ENABLE: "off"
+      MINIO_ROOT_USER: "admin"
+      # kics-scan ignore-line
+      MINIO_ROOT_PASSWORD: "miniopass" # gitleaks:allow
+      MINIO_DEFAULT_BUCKETS: "fhir"
+      MINIO_SCHEME: "http"
+      MINIO_BROWSER: "on"
+    volumes:
+      - minio-data:/bitnami/minio/data:rw
+    ports:
+      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:9000:9000"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  wait-for-minio:
+    image: docker.io/curlimages/curl:8.14.1@sha256:9a1ed35addb45476afa911696297f8e115993df459278ed036182dd2cd22b67b
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: "no"
+    env_file:
+      - path: .demo.env
+        required: true
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until [ "$(curl -s -o /dev/null -L -w "%{http_code}" "$$AWS_ENDPOINT_URL/minio/health/live")" == "200" ]; do
+            echo "$(date): Waiting for minio server @ $$AWS_ENDPOINT_URL to be up";
+            sleep 5;
+        done;
+    depends_on:
+      minio:
+        condition: service_started
+
+  pathling:
+    image: docker.io/aehrc/pathling:7.2.0@sha256:31b5ef50294e55136ae2278c2d0b8435a96a15b5da040ec785effb51875d08d3
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    environment:
+      JAVA_TOOL_OPTIONS: |
+        -Xmx12g
+        -Xss64m
+        -XX:G1HeapRegionSize=32M
+        -XX:+ExplicitGCInvokesConcurrent
+        -XX:+ExitOnOutOfMemoryError
+        -XX:+HeapDumpOnOutOfMemoryError
+        -Duser.timezone=UTC
+        --add-exports=java.base/sun.nio.ch=ALL-UNNAMED
+        --add-opens=java.base/java.net=ALL-UNNAMED
+        --add-opens=java.base/java.nio=ALL-UNNAMED
+        --add-opens=java.base/java.util=ALL-UNNAMED
+        --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
+      pathling.storage.warehouseUrl: s3a://fhir
+      pathling.storage.cacheDatasets: "false"
+      pathling.query.cacheResults: "false"
+      pathling.import.allowableSources: file:///tmp/import/
+      pathling.terminology.enabled: "false"
+      pathling.terminology.serverUrl: http://localhost:8080/i-dont-exist
+      fs.s3a.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
+      fs.s3a.path.style.access: "true"
+      fs.s3a.endpoint: "${AWS_ENDPOINT_URL:?}"
+      fs.s3a.access.key: "${AWS_ACCESS_KEY_ID:?}"
+      fs.s3a.secret.key: "${AWS_SECRET_ACCESS_KEY:?}"
+      spark.sql.parquet.compression.codec: "zstd"
+      spark.io.compression.codec: "zstd"
+      parquet.compression.codec.zstd.level: "9"
+      spark.serializer: "org.apache.spark.serializer.KryoSerializer"
+      spark.master: "local[*]"
+      spark.driver.memory: 10g
+    env_file:
+      - path: .demo.env
+        required: true
+    ports:
+      - "127.0.0.1:8082:8080"
+      - "127.0.0.1:4040:4040"
+    volumes:
+      - $PWD/synthea/:/tmp/import/:ro
+    depends_on:
+      wait-for-minio:
+        condition: service_completed_successfully
+
+  wait-for-pathling:
+    image: docker.io/curlimages/curl:8.14.1@sha256:9a1ed35addb45476afa911696297f8e115993df459278ed036182dd2cd22b67b
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: "no"
+    environment:
+      PATHLING_URL: http://pathling:8080
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until [ "$(curl -s -o /dev/null -L -w "%{http_code}" "$$PATHLING_URL/fhir/metadata")" == "200" ]; do
+            echo "$(date): Waiting for pathling server @ $$PATHLING_URL to be up";
+            sleep 5;
+        done;
+    depends_on:
+      pathling:
+        condition: service_started
+
+  import-resources:
+    image: docker.io/curlimages/curl:8.14.1@sha256:9a1ed35addb45476afa911696297f8e115993df459278ed036182dd2cd22b67b
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: "no"
+    environment:
+      PATHLING_URL: http://pathling:8080
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        curl --fail -X POST --header 'Content-Type: application/fhir+json' --data @/tmp/pathling-import-request.json --url 'http://pathling:8080/fhir/$$import'
+    volumes:
+      - $PWD/pathling-import-request.json:/tmp/pathling-import-request.json:ro
+    depends_on:
+      wait-for-pathling:
+        condition: service_completed_successfully
+
+  warehousekeeper:
+    image: ghcr.io/miracum/util-images/warehousekeeper:v0.1.13@sha256:7f2a1a86f9ee27d98682aaec4a5cfd3615c4278cef8906ffb3e81df57eb21cd9
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: "no"
+    env_file:
+      - path: .demo.env
+        required: true
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        python3 /opt/warehousekeeper/warehousekeeper.py register --bucket-name=fhir --database-name-prefix=default/ --hive-metastore=thrift://hive-metastore:9083
+        python3 /opt/warehousekeeper/warehousekeeper.py optimize --bucket-name=fhir --database-name-prefix=default/
+        python3 /opt/warehousekeeper/warehousekeeper.py vacuum   --bucket-name=fhir --database-name-prefix=default/ --retention-hours=0 --dry-run=false --enforce-retention-duration=false
+    volumes:
+      - $PWD/config/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+    depends_on:
+      import-resources:
+        condition: service_completed_successfully
+      hive-metastore:
+        condition: service_started
+      # added as a dependency to make sure trino is started.
+      # there's technically no interaction with trino.
+      trino:
+        condition: service_started
+      wait-for-minio:
+        condition: service_completed_successfully
+
+  metastore-db:
+    image: docker.io/bitnami/postgresql:17.5.0@sha256:d98f9bee622629586327238d9d178f9941b517adbabe43d6d87cc61063e3eb26
+    ipc: private
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: unless-stopped
+    environment:
+      POSTGRESQL_USERNAME: hive
+      POSTGRESQL_PASSWORD: hive
+      POSTGRESQL_DATABASE: metastore
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  wait-for-metastore-db:
+    image: docker.io/bitnami/postgresql:17.5.0@sha256:d98f9bee622629586327238d9d178f9941b517adbabe43d6d87cc61063e3eb26
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: "no"
+    environment:
+      PGHOST: metastore-db
+      PGPORT: "5432"
+      PGUSER: hive
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until pg_isready; do
+          echo "Waiting for DB $$PGUSER@$$PGHOST:$$PGPORT to be up";
+          sleep 15;
+        done;
+    depends_on:
+      metastore-db:
+        condition: service_started
+
+  hive-metastore:
+    image: ghcr.io/miracum/util-images/hive-metastore:v1.2.5@sha256:1a36b317127f82813e558c28f6801dd8d5535f8daab8b286c631cc95778d138f
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: |
+        -Djavax.jdo.option.ConnectionUserName=hive
+        -Djavax.jdo.option.ConnectionPassword=hive
+    env_file:
+      - path: .demo.env
+        required: true
+    volumes:
+      - $PWD/config/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+    depends_on:
+      wait-for-metastore-db:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  trino:
+    image: docker.io/trinodb/trino:476@sha256:00125e40d063bc4816d165482f6044872b18b56026fb959d3b28ce1f96ffbbee
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: unless-stopped
+    env_file:
+      - path: .demo.env
+        required: true
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - $PWD/config/trino/etc:/usr/lib/trino/etc:ro
+      - $PWD/config/trino/catalog:/etc/trino/catalog:ro
+    depends_on:
+      hive-metastore:
+        condition: service_started
+
+volumes:
+  minio-data: {}

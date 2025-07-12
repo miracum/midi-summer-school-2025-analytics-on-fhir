@@ -1,0 +1,32 @@
+name: test
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    name: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+
+      - name: Start
+        run: |
+          USER_ID=$(id -u) GROUP_ID=$(id -g) docker compose --file compose.yaml --file compose.synthea.yaml --env-file=.demo.env up warehousekeeper --attach-dependencies --abort-on-container-failure
+          docker compose --env-file=.demo.env stop pathling
+
+      - name: Run queries
+        run: |
+          java -jar bin/trino.jar http://localhost:8080 --output-format=ALIGNED -f sql/table-counts.sql

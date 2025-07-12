@@ -1,0 +1,92 @@
+services:
+  superset:
+    image: ghcr.io/miracum/util-images/apache-superset:v1.9.1@sha256:cfe97ef208945c11f078d804687530746f7d7a1e369d10f3236f2bd7d740c3e5
+    # fixed container name so the init-superset has a predictable container target
+    container_name: superset
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: "no"
+    volumes:
+      - $PWD/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - $PWD/superset/:/tmp/superset-import/:ro
+    environment:
+      DATABASE_DB: superset
+      DATABASE_HOST: superset-db
+      DATABASE_PASSWORD: superset
+      DATABASE_USER: superset
+      DATABASE_PORT: "5432"
+    ports:
+      - "127.0.0.1:8088:8088"
+
+  wait-for-superset:
+    image: docker.io/curlimages/curl:8.14.1@sha256:9a1ed35addb45476afa911696297f8e115993df459278ed036182dd2cd22b67b
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: "no"
+    environment:
+      SUPERSET_URL: http://superset:8088
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until [ "$(curl -s -o /dev/null -L -w "%{http_code}" "$$SUPERSET_URL/health")" == "200" ]; do
+            echo "$(date): Waiting for superset server @ $$SUPERSET_URL to be up";
+            sleep 5;
+        done;
+    depends_on:
+      superset:
+        condition: service_started
+
+  init-superset:
+    image: docker.io/library/docker:28.3.2-cli@sha256:13f8f54e0410b262768c3f9ec6fb987abd385ef2b16d43cfe44b93f2042ba399
+    ipc: none
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: "no"
+    environment:
+      SUPERSET_URL: http://superset:8088
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        docker exec superset superset fab create-admin \
+              --username admin \
+              --firstname Superset \
+              --lastname Admin \
+              --email admin@localhost \
+              --password admin
+        docker exec superset superset db upgrade
+        docker exec superset superset init
+    # docker exec superset superset import-datasources -p /tmp/superset-import/trino-datasource.zip -u admin
+    depends_on:
+      wait-for-superset:
+        condition: service_completed_successfully
+
+  superset-db:
+    image: docker.io/bitnami/postgresql:17.5.0@sha256:d98f9bee622629586327238d9d178f9941b517adbabe43d6d87cc61063e3eb26
+    ipc: private
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    privileged: false
+    restart: unless-stopped
+    environment:
+      POSTGRESQL_USERNAME: superset
+      POSTGRESQL_PASSWORD: superset
+      POSTGRESQL_DATABASE: superset
+    deploy:
+      resources:
+        limits:
+          memory: 1G
