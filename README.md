@@ -1,5 +1,13 @@
 # midi-summer-school-analytics-on-fhir
 
+## Open Codespaces (with options)
+1. Click `< > Code`, select `Codespaces`, select `...` and `+ New with options...`
+   ![](docs/codespace_with_options.png)
+1. Under `Machine type`, select `4-core, 16 GB RAM, 32 GB`
+   ![](docs/codespace_machine_type.png)
+1. Click `Create Codespaces` and run the following commands there.
+
+
 ## Getting started
 
 ```sh
