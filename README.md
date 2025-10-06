@@ -14,15 +14,8 @@
 # this automatically starts a Pathling server and kicks-off the resource $import.
 # run this without `--file compose.synthea.yaml` to avoid re-downloading trino and synthea cli
 USER_ID=$(id -u) GROUP_ID=$(id -g) docker compose --file compose.yaml --file compose.synthea.yaml --env-file=.demo.env up warehousekeeper --attach-dependencies --abort-on-container-failure
-# after the import is done, we no longer need the Pathling server itself
-docker compose --env-file=.demo.env stop pathling
 ```
 
-Cleanup when you're done:
-
-```sh
-docker compose --env-file=.demo.env down -v --remove-orphans
-```
 
 Install Python packages (Already done on GitHub Codespaces):
 
@@ -68,3 +61,15 @@ Open <http://localhost:8088/> and login as `admin` with password `admin`.
    FROM fhir.default.patient;
    ```
    And click `Run`.
+
+
+
+When you don't use Pathling server itself, you can also stop
+```sh
+docker compose --env-file=.demo.env stop pathling
+```
+
+Cleanup when you're done:
+```sh
+docker compose --env-file=.demo.env down -v --remove-orphans
+```
